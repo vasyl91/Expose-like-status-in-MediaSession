@@ -1,4 +1,4 @@
-public final class app/revanced/patches/example/ExamplePatchKt {
-	public static final fun getExamplePatch ()Lapp/revanced/patcher/patch/BytecodePatch;
+public final class app/revanced/patches/youtube/misc/likestatus/ExposeLikeStatusPatchKt {
+	public static final fun getExposeLikeStatusPatch ()Lapp/revanced/patcher/patch/BytecodePatch;
 }
 

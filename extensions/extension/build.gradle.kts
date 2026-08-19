@@ -1,7 +1,5 @@
-extension {
-    name = "extensions/extension.rve"
-}
-
 android {
-    namespace = "app.revanced.extension"
+    defaultConfig {
+        minSdk = 26
+    }
 }

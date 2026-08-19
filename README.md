@@ -58,79 +58,107 @@
    Continuing the legacy of Vanced
 </p>
 
-# 👋🧩 ReVanced Patches template
+# Expose like status in MediaSession
 
-![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/ReVanced/revanced-patches-template/release.yml)
-![GPLv3 License](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)
+A ReVanced patch for YouTube that publishes the current video's id and like
+status into the media session metadata, so another application can read them
+over a `MediaController`.
 
-Template repository for ReVanced Patches.
+It was written for a car head unit launcher whose favourite button needs to know
+whether the playing video is liked. YouTube does not expose that: unlike Spotify
+or Apple Music, it publishes no `Rating` and no like/dislike custom actions, so
+any external media client is blind to it.
 
-## ❓ About
+## What it adds
 
-This is a template to create a new ReVanced Patches repository.  
-The repository can have multiple patches, and patches from other repositories can be used together.
+Three values are written into `MediaMetadata` alongside YouTube's own:
 
-For an example repository, see [ReVanced Patches](https://github.com/revanced/revanced-patches).
+| Key | Type | Meaning |
+|---|---|---|
+| `android.media.metadata.MEDIA_ID` | String | the 11 character video id |
+| `com.android.launcher66.LIKE_EVENT_SEQ` | long | counter, bumped every time a status is published |
+| `com.android.launcher66.LIKE_STATUS` | long | `-1` cleared, `0` none, `1` like, `2` dislike |
 
-## 🚀 Get started
+The video id is the important one. With it a receiving application can ask the
+YouTube Data API (`videos.getRating`) for the authoritative status, which is the
+only reliable source for a video that was already liked before playback started.
 
-To start using this template, follow these steps:
+The sequence counter exists so a receiver can tell a real event from a stale
+value. It is bumped on every published status, including the reset that happens
+when the track changes — so a receiver that restarts mid-video cannot mistake an
+old value for a fresh one. Ratings sent *to* YouTube over the media session never
+bump it, which lets a receiver ignore the echo of its own actions.
 
-1. [Create a new repository using this template](https://github.com/new?template_name=revanced-patches-template&template_owner=ReVanced)
-2. Set up the [build.gradle.kts](patches/build.gradle.kts) file (Specifically, the [group of the project](patches/build.gradle.kts#L1),
-and the [About](patches/build.gradle.kts#L5-L11))
-3. Update dependencies in the [libs.versions.toml](gradle/libs.versions.toml) file
-4. [Create a pass-phrased GPG master key and subkey](https://mikeross.xyz/create-gpg-key-pair-with-subkeys/)
-   1. Add the private key as a secret named [GPG_PRIVATE_KEY](.github/workflows/release.yml#L52) to your repository
-   2. Add the passphrase as a secret named [GPG_PASSPHRASE](.github/workflows/release.yml#L53) to your repository
-   3. Add the fingerprint of the GPG subkey as a secret named [GPG_FINGERPRINT](.github/workflows/release.yml#L54) to your repository
-5. Set up the [README.md](README.md) file[^1] (e.g, title, description, license, summary of the patches
-that are included in the repository), the [issue templates](.github/ISSUE_TEMPLATE)[^2]  and the [contribution guidelines](CONTRIBUTING.md)[^3]
+## How it works
 
-🎉 You are now ready to start creating patches!
+Two injection points:
 
-[^1]: [Example README.md file](https://github.com/ReVanced/revanced-patches/blob/main/README.md)
-[^2]: [Example issue templates](https://github.com/ReVanced/revanced-patches/tree/main/.github/ISSUE_TEMPLATE)
-[^3]: [Example contribution guidelines](https://github.com/ReVanced/revanced-patches/blob/main/CONTRIBUTING.md)
+**`MediaSession.setMetadata`** — the metadata is routed through the extension on
+its way to the session, which adds the three keys. The target is a framework
+class, so this hook is immune to obfuscation and survives YouTube updates.
 
-## 🔘 Optional steps
+**The like event constructor** — invoked whenever the user taps the thumb inside
+YouTube. This one targets an obfuscated class name and will break on updates; see
+`PATCH_MAINTENANCE.md` for how to find the new one. Losing it costs only the
+immediate reaction to in-app taps; everything else keeps working.
 
-You can also add the following things to the repository:
+The video id is obtained by calling ReVanced's own `VideoInformation.getVideoId()`
+reflectively. That extension lives in the same APK and its names are kept by the
+project's proguard rules, which avoids having to locate the id in obfuscated code.
 
-- API documentation, if you want to publish your patches as a library
+## Known limitations
 
-## 🧑‍💻 Usage
+**Videos made for kids report no rating.** `videos.getRating` answers `none` for
+them however they were rated, and they never appear in `myRating=like`. This is a
+limitation on Google's side and cannot be worked around.
 
-To develop and release ReVanced Patches using this template, some things need to be considered:
+**Ratings sent over the media session do not reach the account.** YouTube applies
+them to its own interface only — they show up in the app and even in a browser,
+but the Data API does not see them and they are absent from the liked videos
+list. An application that wants a rating to stick must write it through
+`videos.rate` instead, and may then send the session rating afterwards purely to
+refresh the on-screen thumb.
 
-- Development starts in feature branches. Once a feature branch is ready, it is squashed and merged into the `dev` branch
-- The `dev` branch is merged into the `main` branch once it is ready for release
-- Semantic versioning is used to version ReVanced Patches. ReVanced Patches have a public API for other patches to use
-- Semantic commit messages are used for commits
-- Commits on the `dev` branch and `main` branch are automatically released
-via the [release.yml](.github/workflows/release.yml) workflow, which is also responsible for generating the changelog
-and updating the version of ReVanced Patches. It is triggered by pushing to the `dev` or `main` branch.
-The workflow uses the `publish` task to publish the release of ReVanced Patches
-- The `buildAndroid` task is used to build ReVanced Patches so that it can be used on Android.
-The `publish` task depends on the `buildAndroid` task, so it will be run automatically when publishing a release.
+**The status of a video liked before playback started is not available here.**
+YouTube does not surface it through any Java object at load time; it goes
+straight to the native renderer as a protobuf buffer. Six independent attempts to
+intercept it failed, which is why the video id is published instead and the
+question is left to the Data API.
 
-## 📚 Everything else
+## Building
 
-### 📙 Contributing
+Requires JDK 17 or newer and the Android SDK. The patch is built with the
+ReVanced patches Gradle plugin:
 
-Thank you for considering contributing to ReVanced Patches template.  
-You can find the contribution guidelines [here](CONTRIBUTING.md).
+```
+./gradlew build
+```
 
-### 🛠️ Building
+Then applied together with the official bundle, so GmsCore support and the rest
+are kept:
 
-To build ReVanced Patches template,
-you can follow the [ReVanced documentation](https://github.com/ReVanced/revanced-documentation).
+```
+java -jar revanced-cli.jar patch \
+  -p patches.rvp -b \
+  -p patches/build/libs/patches-1.0.4.rvp -b \
+  --keystore=my.keystore --purge \
+  -o youtube-patched.apk stock.apk
+```
 
-## 📜 Licence
+Last verified against YouTube 20.40.45.
 
-ReVanced Patches template is licensed under the GPLv3 licence.
-Please see the [license file](LICENSE) for more information.
-[tl;dr](https://www.tldrlegal.com/license/gnu-general-public-license-v3-gpl-3) you may copy, distribute
-and modify ReVanced Patches template as long as you track changes/dates in source files.
-Any modifications to ReVanced Patches template must also be made available under the GPL,
-along with build & install instructions.
+## Consuming the metadata
+
+```java
+MediaMetadata metadata = controller.getMetadata();
+String videoId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID);
+long seq = metadata.getLong("com.android.launcher66.LIKE_EVENT_SEQ");
+long status = metadata.getLong("com.android.launcher66.LIKE_STATUS");
+```
+
+Treat a change of `seq` as the event and the accompanying `status` as its value.
+Reading `status` on its own is not safe: it is stale after the receiver sends a
+rating of its own, because that takes a different path inside YouTube and never
+reaches the patch.
+
+## [PATCH_MAINTENANCE](https://github.com/vasyl91/Expose-like-status-in-MediaSession/blob/main/PATCH_MAINTENANCE.md)
